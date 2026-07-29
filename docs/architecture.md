@@ -1,192 +1,207 @@
-\# Architecture — Inventory and Order Management System
+# Architecture
 
+MySQL 8 on InnoDB. InnoDB is not optional here: it is what enforces foreign
+keys and supports transactions, and the whole design leans on both.
 
+## The model
 
-\## Overview
-
-This system tracks products, customers, orders, and inventory changes for an
-
-e-commerce business. It is built in MySQL 8.0, using InnoDB as the storage
-
-engine (required for foreign key enforcement and transactions).
-
-
-
-\## Entity Relationship Diagram
-
-
-
+```
 customers ||--o{ orders : places
+orders    ||--o{ order_details : contains
+products  ||--o{ order_details : "appears in"
+products  ||--o{ inventory_logs : "movements of"
+orders    ||--o{ inventory_logs : "may have caused"
+business_rules : standalone configuration
+```
+
+**Customers to orders is one-to-many.** One customer places many orders; each
+order belongs to exactly one customer. The foreign key sits on `orders`, the
+"many" side, because a single column there can hold the one customer it needs.
+
+**Orders to products is many-to-many.** An order holds many products, and a
+product appears in many orders. Neither direction fits in one column, so they
+meet in `order_details`. Each row there is one product inside one order, which
+is also the natural home for `quantity`, `unit_price` and `returned_quantity`:
+those describe the pairing, not the order or the product on its own.
+
+**Products to inventory_logs is one-to-many.** Every movement concerns exactly
+one product.
+
+**Orders to inventory_logs is one-to-many and optional.** A movement caused by
+a sale points back to its order. A supplier delivery or a stocktake correction
+has no order, so `order_id` is null.
+
+## Design decisions
+
+### Stock has exactly one owner
+
+`products.stock_quantity` is a running balance; `inventory_logs` is the ledger
+behind it. Two representations of the same fact can drift apart, so only one
+procedure, `record_stock_change`, is allowed to write either. It updates the
+balance and writes the ledger row together, in the caller's transaction.
+
+`v_stock_reconciliation` compares the two. If a row shows `is_balanced = FALSE`,
+something bypassed the procedure. The build fails on that, and the test suite
+asserts it is zero.
 
-orders ||--o{ order\_details : contains
+That is also why the seed data never types a stock number in. Products start
+at zero and every unit arrives through `record_stock_change`, so the ledger
+and the balances agree by construction rather than by luck.
 
-products ||--o{ order\_details : "appears in"
+### The ledger is genuinely append-only
 
-products ||--o{ inventory\_logs : "tracked by"
+`BEFORE UPDATE` and `BEFORE DELETE` triggers on `inventory_logs` raise an
+error. Corrections are made by posting a balancing `ADJUSTMENT` row, which
+leaves both the mistake and the fix visible.
+
+This is also why `inventory_logs.order_id` uses `ON DELETE RESTRICT` rather
+than `SET NULL`. MySQL carries out foreign key actions without firing
+triggers, so `SET NULL` would quietly rewrite a row the guard is meant to
+protect. `RESTRICT` means an order with stock history cannot be deleted at
+all: cancel it instead, which is the correct operation anyway.
 
-orders ||--o{ inventory\_logs : "may trigger"
+### Business rules live in a table
 
+Tier thresholds, the spending window and discount bands are rows in
+`business_rules`, read through the `get_rule()` function. Nothing hard-codes
+a threshold.
 
+This replaced an earlier version where the tier thresholds appeared in four
+separate places: a report query, two triggers and a reconciliation procedure.
+Changing Gold from 100 to 150 meant four edits and a real chance of missing
+one. Now it is one `UPDATE`, and `tests/02_test_procedures.sql` proves the
+change flows through with no code touched.
 
-\- \*\*Customers -> Orders\*\*: one-to-many. One customer can place many orders;
+### Tiers are computed, not stored
 
-&#x20; each order belongs to exactly one customer.
+`v_customer_tiers` works the tier out on demand from `v_order_summary`.
 
-\- \*\*Orders <-> Products\*\*: many-to-many, resolved via the `order\_details`
+The alternative was a `customer_tier` column kept up to date by triggers. That
+was built first and then removed. It needed two triggers, a reconciliation
+procedure and a scheduled event, because a tier based on a rolling three-month
+window goes stale as time passes with no order event to notice. Computing it
+on demand cannot go stale, needs none of that machinery, and keeps the rules
+in one place. At this data size the cost is not measurable.
 
-&#x20; linking table. One order can contain many products; one product can appear
+Removing it also dropped a dependency on MySQL's event scheduler, which is off
+by default, needs `SUPER` to switch on, and resets on server restart unless
+it is set in the config file.
 
-&#x20; in many orders. Neither relationship fits in a single foreign key column,
+### Order money is broken into four columns
 
-&#x20; which is why `order\_details` exists as its own table with two foreign keys.
+`subtotal_amount` (list price), `bulk_discount_amount`,
+`order_discount_amount` and `total_amount`. Storing only the final figure
+loses the reason for it, and a discount that cannot be explained is a problem
+in an audit.
 
-\- \*\*Products -> Inventory Logs\*\*: one-to-many. Every stock change is tied to
+Two rules can apply, in this order:
 
-&#x20; exactly one product.
-
-\- \*\*Orders -> Inventory Logs\*\*: one-to-many, but optional (nullable FK). A
-
-&#x20; stock change caused by a customer order links back to that order; a manual
-
-&#x20; replenishment or adjustment has `order\_id = NULL` since no order caused it.
-
-
-
-\## Design decisions and their reasoning
-
-
-
-\### Soft delete on customers (`is\_active`)
-
-Customers are never physically deleted. Deleting a customer with existing
-
-orders would either be blocked (if `ON DELETE RESTRICT`, our actual setting)
-
-or would silently destroy order history (if `ON DELETE CASCADE`). Instead,
-
-`is\_active = FALSE` marks an account inactive while preserving all historical
-
-orders for audit/reporting purposes. Standard practice for any system where
-
-past transactional data has ongoing business value.
-
-
-
-\### Partial returns (`order\_details.returned\_quantity`)
-
-A customer may return only some of the units they ordered on a line item
-
-(e.g., ordered 5, returned 2). `returned\_quantity` tracks this at the
-
-individual line-item level rather than the whole-order level, since returns
-
-are naturally a per-product event. Enforced with
-
-`CHECK (returned\_quantity <= quantity)` so a return can never exceed what was
-
-actually ordered.
-
-
-
-\### Order status lifecycle
-
-`orders.status` is constrained to: `pending`, `shipped`, `delivered`,
-
-`cancelled`, `returned`. This was added after reviewing the schema and
-
-noticing there was no way to represent a cancelled or returned order — the
-
-original design only supported the "happy path."
-
-
-
-\### Non-negative stock (`CHECK (stock\_quantity >= 0)`)
-
-A database-level safety net preventing negative stock, in addition to the
-
-application-level check performed by the `place\_order` procedure before
-
-accepting an order. Two layers are intentional: the procedure gives customers
-
-a clean rejection message; the CHECK constraint protects data integrity even
-
-if application logic has a bug or two requests race each other.
-
-
-
-\### Inventory logs as an append-only ledger
-
-`inventory\_logs` never gets updated or deleted (by design, not currently
-
-enforced with a trigger) — every stock change, whether from a sale, a
-
-cancellation, a return, a manual replenishment, or a stock adjustment, is
-
-recorded as a new row. This satisfies the spec's requirement for "a full
-
-history of inventory changes... retrievable for auditing purposes." The
-
-`reason` column (`ORDER`, `REPLENISHMENT`, `RETURN`, `CANCELLATION`,
-
-`ADJUSTMENT`) distinguishes why each change happened without needing to infer
-
-it from `order\_id` being null or not.
-
-
-
-\### Order placement as a stored procedure with transactions
-
-`place\_order` wraps order creation, stock deduction, and logging in a single
-
-`START TRANSACTION` / `COMMIT` block, so a failure partway through leaves no
-
-partial data. Stock sufficiency is checked with `SELECT ... FOR UPDATE`
-
-before any writes happen, and insufficient stock triggers a `SIGNAL` that
-
-aborts the whole operation cleanly. This directly satisfies "deduct the
-
-correct quantity from stock" and "ensure the system can handle multiple
-
-products in a single order" from the Phase 2 spec (repeating the same
-
-insert/update/log block once per product line).
-
-
-
-\### Reporting: LEFT JOIN vs JOIN
-
-Order/spending reports use `LEFT JOIN` from `customers` so that customers
-
-with zero orders still appear (e.g., with $0 spent, Bronze tier), rather than
-
-silently disappearing from business reports. Discount reporting uses a plain
-
-`JOIN` from `orders`, since that report is specifically about orders that
-
-exist.
-
-
-
-\### Business rule placeholders (Phase 3)
-
-The following thresholds are illustrative placeholders, clearly documented as
-
-such and easy to change in one place, pending real numbers from a product or
-
-finance stakeholder:
-
-\- Customer tier thresholds (Gold >= $100, Silver >= $50, evaluated over a
-
-&#x20; trailing 3-month window)
-
-\- Order-level discount thresholds (10% at $100+, 5% at $50+)
-
-
-
-Cancelled orders are excluded from all spending calculations. Returned
-
-quantities reduce a customer's counted net spending, since that revenue was
-
-not actually retained.
-
+1. **Bulk discount, by quantity.** Set per line, from the number of units of
+   that one product, against the `bulk_*` bands. It lives on
+   `order_details.discount_rate` because it depends on the line, not the
+   order. A `BEFORE INSERT` trigger sets it, so the rule holds whether the
+   line came from `place_order`, the seed script, or a manual insert.
+2. **Order-value discount.** A separate reward for the size of the whole
+   order, from the `spend_*` bands, applied by `apply_order_discount` to the
+   amount *after* bulk discounts so the two do not compound.
+
+Both rates are frozen when the order is placed. `recalc_order_money`, which
+the `order_details` triggers call to keep the header in step with the lines,
+reuses the stored `order_discount_rate` rather than recalculating it, and the
+line rate is only ever set on insert. Editing an old order therefore does not
+reprice it against today's bands.
+
+`v_order_discounts` reports a blended `effective_discount_rate` for
+convenience, but nothing is stored that way: the two rules stay separable.
+
+### Orders are placed in one call
+
+`place_order` takes a JSON array of items and does everything inside a single
+transaction: validate, lock, create the order, add every line, move the stock,
+write the ledger, apply the discount.
+
+The alternative was a three-step flow (create a draft, add lines, finalise).
+It was rejected because a draft can be abandoned halfway, leaving rows that
+are not a real order and that every report then has to filter out. One atomic
+call has no such state.
+
+Products are locked in ascending `product_id` order. If every caller locks in
+the same order, two concurrent orders touching the same products cannot
+deadlock each other.
+
+A product listed twice in one payload is merged into a single line rather than
+rejected, which is what the unique constraint on `(order_id, product_id)`
+requires and what a caller would expect.
+
+### Two layers of protection, on purpose
+
+`place_order` checks stock and returns a clear message so a customer sees
+"only 3 available". `CHECK (stock_quantity >= 0)` is the safety net beneath it.
+The first exists for the experience, the second because application code has
+bugs and races happen.
+
+### Status cannot move backwards
+
+A trigger allows only `pending → shipped/cancelled`,
+`shipped → delivered/cancelled` and `delivered → returned`. Cancelled and
+returned are final. Without this, a delivered order could be flipped back to
+pending and quietly corrupt every report built on status.
+
+### Soft delete
+
+Customers are never removed. `is_active = FALSE` retires an account while its
+order history stays intact for accounting. `ON DELETE RESTRICT` on
+`orders.customer_id` makes deleting a customer with orders impossible, which
+is the intended outcome rather than an inconvenience.
+
+`place_order` refuses orders from inactive customers, so the flag actually
+does something rather than sitting there unused.
+
+### Time is stored properly, and order_date is derived
+
+`orders.placed_at` is `DATETIME`, not `TIMESTAMP`, because `TIMESTAMP` stops
+working after 2038. A full timestamp also means two orders on the same day can
+still be put in order.
+
+Day-level `order_date` is derived in the views as `DATE(placed_at)` rather than
+stored as a generated column. It was a `STORED` generated column at first, and
+that failed: MySQL evaluates a stored generated column against the row before a
+`BEFORE INSERT` trigger has finished with it, and `orders` has one, so every
+insert produced `'0000-00-00'` and error 1292.
+
+`products.is_low_stock` is still a stored generated column and works fine,
+because `products` has no trigger. That contrast is the whole explanation.
+
+Deriving it in the views costs nothing here: the views alias it as `order_date`
+so callers see the same thing, and the date-range index sits on `placed_at`,
+which serves the same queries.
+
+### The low stock filter is indexable
+
+`WHERE stock_quantity <= reorder_level` compares two columns, and no index can
+serve that: it is always a full table scan. `products.is_low_stock` is a
+generated stored column holding the comparison, and it is indexed, so
+`v_low_stock` is a lookup rather than a scan.
+
+### Indexes are chosen, not sprinkled
+
+Only columns real queries filter, join or sort on are indexed, because indexes
+slow writes down and take space. Foreign key columns are deliberately left
+alone: MySQL indexes them automatically, and adding them again just duplicates
+work. `sql/indexes/01_indexes.sql` says so in a comment, so the omission reads
+as a decision rather than an oversight.
+
+## Known limits
+
+- **An order with no line items is possible at the table level.** MySQL has no
+  deferred constraints, so "an order must have at least one line" cannot be a
+  constraint. `place_order` enforces it; direct inserts could break it.
+- **Returns beyond a time limit are not restricted.** Any delivered order can
+  be returned, however old. A real returns window belongs in `business_rules`.
+- **Partial fulfilment is not supported.** An order for five units when three
+  are in stock is rejected outright rather than partially filled or
+  backordered. Rejecting is the safer default; backorders are a product
+  decision, not a technical one.
+- **`v_customer_tiers` calls a function per row group.** Correct, and fine at
+  this size. On a large customer base it would be worth reading the thresholds
+  into variables once instead.
