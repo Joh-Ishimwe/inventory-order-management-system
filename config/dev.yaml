@@ -1,0 +1,17 @@
+# Local development settings. No secrets here: credentials come from .env.
+database:
+  host: 127.0.0.1
+  port: 3306
+  database: inventory_order_management
+  # Every connection attempt gives up after this long instead of hanging.
+  connect_timeout_seconds: 10
+
+retry:
+  # Transient failures only (server busy, deadlock, dropped connection).
+  max_attempts: 3
+  base_delay_seconds: 0.5
+  max_delay_seconds: 8.0
+
+logging:
+  level: INFO
+  file: logs/pipeline.log

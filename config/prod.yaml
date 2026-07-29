@@ -1,0 +1,17 @@
+# Production settings. The host and credentials are supplied by the
+# environment, not committed here.
+database:
+  host: ${DB_HOST}
+  port: 3306
+  database: inventory_order_management
+  connect_timeout_seconds: 15
+
+retry:
+  # More patience in production: a brief outage should not fail the run.
+  max_attempts: 5
+  base_delay_seconds: 1.0
+  max_delay_seconds: 30.0
+
+logging:
+  level: INFO
+  file: logs/pipeline.log
