@@ -47,6 +47,11 @@ def replenish(config: AppConfig, buffer_multiplier: float = 2.0,
                     extra={"context": {"products": len(plan)}})
         return {"applied": False, "plan": plan}
 
+    if not plan:
+        logger.info("nothing below reorder point, nothing to apply")
+        return {"applied": False, "reason": "nothing below reorder point",
+                 "succeeded": [], "failed": []}
+
     applied, failed = [], []
     with MySQLClient(config) as client:
         for item in plan:
