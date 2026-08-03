@@ -21,7 +21,7 @@ reporting on spend, discounts and low stock.
 | `sql/security/` | Roles, grants and example accounts |
 | `sql/seed/` | Sample data, built through the real procedures |
 | `src/` | Python: config, logging, database access, pipelines |
-| `scripts/` | Command-line entry points |
+| `scripts/` | Command-line entry points, including a Python-free build script |
 | `tests/` | Test suites that fail loudly rather than printing results to read |
 | `docs/` | Architecture, data dictionary, security, decision record |
 
@@ -68,7 +68,11 @@ python scripts/run_pipeline.py --with-security
 
 Every `.sql` file works on its own in MySQL Workbench or the client. Run them
 in the order listed in `src/utils/constants.py`, then `sql/seed/`, then
-`tests/`.
+`tests/`. Or build the whole thing with one script and no Python at all:
+
+```powershell
+.\scripts\build.ps1 -WithTests
+```
 
 ---
 
