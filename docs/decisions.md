@@ -233,6 +233,17 @@ query. Nothing failed when the expectation was wrong; someone had to notice.
 `assert_equals` and `expect_error` raise, so a wrong result stops the run and
 `run_pipeline.py --with-tests` returns a non-zero exit code.
 
+**Consequence.** The tests call the real procedures rather than mocking them
+— the only way to actually prove `place_order` and the rest work — which
+means the run creates real orders and ledger rows. Wrapping the suite in one
+transaction and rolling it back afterward will not undo this: `place_order`,
+`cancel_order` and the rest each open and commit their own transaction, and
+starting a transaction while one is already open implicitly commits it, so
+an outer `ROLLBACK` has nothing left to undo. `inventory_logs` is
+append-only regardless (decision 6), so those rows could not be deleted
+either way. Rebuild the database after a `--with-tests` run rather than
+treating it as a no-op.
+
 ---
 
 ## 12. Replenishment: computed and applied in SQL
