@@ -31,4 +31,9 @@ INSERT INTO business_rules (rule_key, rule_value, description) VALUES
 ('spend_t1_min',        50.0000,  'Order value needed for the first spend band'),
 ('spend_t1_rate',        0.0500,  'First spend band rate (5%)'),
 ('spend_t2_min',       100.0000,  'Order value needed for the second spend band'),
-('spend_t2_rate',        0.1000,  'Second spend band rate (10%)');
+('spend_t2_rate',        0.1000,  'Second spend band rate (10%)'),
+
+-- Replenishment: how far above the reorder level a restock brings a product,
+-- so it does not reappear on the low-stock report after one sale.
+('replenishment_buffer_multiplier', 2.0000,
+ 'Restock target as a multiple of the reorder level');

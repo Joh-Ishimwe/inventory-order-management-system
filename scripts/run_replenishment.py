@@ -25,8 +25,8 @@ from src.utils.paths import ensure_project_dirs  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description="Low stock report and replenishment.")
     parser.add_argument("--apply", action="store_true", help="place the restocks")
-    parser.add_argument("--buffer", type=float, default=2.0,
-                        help="restock to this multiple of the reorder level")
+    parser.add_argument("--note", default="Automated replenishment run",
+                        help="note recorded on each ledger entry")
     parser.add_argument("--env", default=None)
     args = parser.parse_args()
 
@@ -36,7 +36,7 @@ def main() -> int:
     logger = get_logger("run_replenishment")
 
     try:
-        outcome = replenish(config, buffer_multiplier=args.buffer, apply=args.apply)
+        outcome = replenish(config, note=args.note, apply=args.apply)
     except Exception:
         logger.exception("replenishment run failed")
         return 1
