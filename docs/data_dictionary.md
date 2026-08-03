@@ -34,6 +34,7 @@ Seeded keys (all placeholders until finance confirm them):
 | spend_t1_rate | 0.05 | First spend band rate |
 | spend_t2_min | 100.00 | Order value for the second spend band |
 | spend_t2_rate | 0.10 | Second spend band rate |
+| replenishment_buffer_multiplier | 2.0 | Restock target as a multiple of the reorder level |
 
 Bulk bands apply per line, by unit count. Spend bands apply to the whole order,
 after bulk discounts.
@@ -173,6 +174,7 @@ stock released), `ADJUSTMENT` (stocktake, breakage, write-off).
 | return_order_line | order_detail_id, quantity, return_date, note | Returns some or all units of one line on a delivered order. Refuses more than is outstanding, or a date before the order. Marks the whole order returned once nothing is outstanding |
 | replenish_stock | product_id, quantity, note | Records a supplier delivery. Refuses a quantity of zero or less |
 | adjust_stock | product_id, change_amount, note | Corrects stock after a stocktake or write-off. Can go either way, and requires a note |
+| replenish_all | note | Applies the whole restock plan in v_replenishment_plan, one product at a time. A product that fails is recorded FAILED and the rest of the batch still runs. Returns one row per product attempted |
 | assert_equals | actual, expected, label | Test helper. Raises an error when they differ |
 | expect_error | sql, label | Test helper. Runs a statement expecting it to fail, and fails the test if it succeeded |
 
@@ -196,6 +198,7 @@ A product listed more than once is merged into a single line.
 | v_customer_tiers | Customer | Net spend in the window, order count, Bronze/Silver/Gold. Includes customers with no orders. Thresholds read from business_rules |
 | v_order_discounts | Order | Bulk and order-value discounts side by side, their total, and a derived blended rate for reporting. Reads stored rates so history is stable |
 | v_stock_reconciliation | Product | Balance against ledger sum, difference, and is_balanced. Anything but TRUE is a bug |
+| v_replenishment_plan | Low product | v_low_stock plus a suggested restock quantity, from replenishment_buffer_multiplier. What replenish_all applies |
 
 ---
 

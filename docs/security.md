@@ -66,8 +66,8 @@ them. `SELECT * FROM customers` fails.
 Stock, not customers or revenue.
 
 - `SELECT` on `products`, `inventory_logs`, `v_low_stock`,
-  `v_stock_reconciliation`
-- `EXECUTE` on `replenish_stock` and `adjust_stock`
+  `v_replenishment_plan`, `v_stock_reconciliation`
+- `EXECUTE` on `replenish_stock`, `adjust_stock` and `replenish_all`
 
 Cannot see orders or customers.
 

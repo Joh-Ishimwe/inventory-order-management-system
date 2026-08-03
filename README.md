@@ -138,6 +138,7 @@ so changing the bands later does not reprice old orders.
 | `v_order_discounts` | Both discounts per order, their total, and the blended rate |
 | `v_order_line_detail` | Line by line, with the bulk discount each line earned |
 | `v_stock_reconciliation` | Whether stock balances still match the ledger |
+| `v_replenishment_plan` | Low-stock products plus the restock quantity `replenish_all` would apply |
 
 ---
 

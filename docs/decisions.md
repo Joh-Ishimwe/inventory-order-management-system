@@ -235,7 +235,34 @@ query. Nothing failed when the expectation was wrong; someone had to notice.
 
 ---
 
-## 12. Seed data built through the real procedures
+## 12. Replenishment: computed and applied in SQL
+
+**Options.** (a) work out the restock quantity in Python, then loop over
+products and call `replenish_stock` once per row; (b) compute the quantity in
+a view and apply the whole plan through one stored procedure.
+
+**Chosen: (b).** The restock math (target as a multiple of the reorder level)
+and the "apply every low product, keep going if one fails" loop were both
+originally in Python. Neither needs to be: the math is one expression over
+`v_low_stock`, and the loop is a cursor. Moving both into SQL means
+`v_replenishment_plan` and `replenish_all` are, like everything else,
+reviewable and runnable on their own in Workbench, with no Python required to
+see them work. Python's role shrank to calling one of the two and printing
+what came back.
+
+The buffer multiplier itself moved into `business_rules` rather than staying
+a Python CLI default, for the same reason every other threshold is there:
+changing it is one `UPDATE`, not a code or flag change.
+
+**Cost.** `replenish_all` uses a cursor and a per-row exception handler to
+keep one failing product from losing the rest of the batch — more moving
+parts than a Python `try/except` in a loop. Accepted because it means the
+batch-apply behaviour exists even when nothing but a `.sql` client is
+present.
+
+---
+
+## 13. Seed data built through the real procedures
 
 **Options.** (a) insert stock levels and order totals directly; (b) start
 products at zero and move every unit through `record_stock_change`, place

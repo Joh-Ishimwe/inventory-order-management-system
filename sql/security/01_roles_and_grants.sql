@@ -47,9 +47,11 @@ GRANT SELECT ON inventory_order_management.business_rules    TO reporting_analys
 GRANT SELECT ON inventory_order_management.products       TO inventory_manager;
 GRANT SELECT ON inventory_order_management.inventory_logs TO inventory_manager;
 GRANT SELECT ON inventory_order_management.v_low_stock    TO inventory_manager;
+GRANT SELECT ON inventory_order_management.v_replenishment_plan   TO inventory_manager;
 GRANT SELECT ON inventory_order_management.v_stock_reconciliation TO inventory_manager;
 GRANT EXECUTE ON PROCEDURE inventory_order_management.replenish_stock TO inventory_manager;
 GRANT EXECUTE ON PROCEDURE inventory_order_management.adjust_stock    TO inventory_manager;
+GRANT EXECUTE ON PROCEDURE inventory_order_management.replenish_all   TO inventory_manager;
 
 -- ---------------------------------------------------------------
 -- auditor: read the trail, change nothing, see no personal data.
