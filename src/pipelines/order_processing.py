@@ -11,34 +11,40 @@ from typing import Any
 
 from src.monitoring.logging import get_logger
 from src.storage.mysql import MySQLClient, PermanentDatabaseError
-from src.transformations.validation import validate_order_request
 from src.utils.config import AppConfig
 
 logger = get_logger(__name__)
 
 
 def process_orders(config: AppConfig, requests: list[dict[str, Any]]) -> dict[str, Any]:
-    """Try to place every order in the batch, and report what happened."""
+    """Try to place every order in the batch, and report what happened.
+
+    place_order itself enforces every business rule (non-empty items,
+    positive quantities, active customer, product existence) via SIGNAL, so
+    the only thing coerced here is customer_id, which the driver needs as
+    an actual int to bind as a procedure argument.
+    """
     placed: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
     with MySQLClient(config) as client:
         for position, request in enumerate(requests, start=1):
-            result = validate_order_request(request)
-            if not result.is_valid or not result.cleaned:
-                failed.append({"position": position, "reason": "; ".join(result.errors)})
+            try:
+                customer_id = int(request.get("customer_id"))
+            except (TypeError, ValueError):
+                reason = f"customer_id is not valid: {request.get('customer_id')!r}"
+                failed.append({"position": position, "reason": reason})
                 logger.warning("order rejected before reaching the database",
-                               extra={"context": {"position": position,
-                                                  "errors": result.errors}})
+                               extra={"context": {"position": position, "reason": reason}})
                 continue
 
-            payload = json.dumps(result.cleaned["items"])
+            payload = json.dumps(request.get("items"))
             try:
                 # The procedure is one transaction, so an order either lands
                 # completely or not at all. Nothing partial is left behind.
                 returned = client.call_procedure(
                     "place_order",
-                    [result.cleaned["customer_id"], payload, 0],
+                    [customer_id, payload, 0],
                 )
                 order_id = returned[2] if len(returned) > 2 else None
                 placed.append({"position": position, "order_id": order_id})

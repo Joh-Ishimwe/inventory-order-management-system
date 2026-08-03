@@ -12,14 +12,26 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.ingestion.files import read_order_requests  # noqa: E402
 from src.monitoring.logging import get_logger, setup_logging  # noqa: E402
 from src.pipelines.order_processing import process_orders  # noqa: E402
 from src.utils.config import load_config  # noqa: E402
-from src.utils.paths import ensure_project_dirs  # noqa: E402
+from src.utils.paths import ensure_project_dirs, project_path  # noqa: E402
+
+
+def read_order_requests(relative_path: str) -> list[dict[str, Any]]:
+    """Read a JSON file holding a list of order requests."""
+    path = project_path(relative_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Input file not found: {relative_path}")
+    with open(path, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, list):
+        raise ValueError("Expected a JSON list of order requests")
+    return payload
 
 
 def main() -> int:
