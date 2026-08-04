@@ -1,5 +1,4 @@
--- Wipes everything so the build can be re-run from scratch.
--- Safe to run on a machine where nothing exists yet.
+-- Drops all schema objects (views, triggers, procedures, tables) for a clean rebuild.
 CREATE DATABASE IF NOT EXISTS inventory_order_management
   CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 USE inventory_order_management;
@@ -34,7 +33,7 @@ DROP PROCEDURE IF EXISTS assert_equals;
 
 DROP FUNCTION IF EXISTS get_rule;
 
--- Children before parents, or the foreign keys block the drop.
+
 DROP TABLE IF EXISTS inventory_logs;
 DROP TABLE IF EXISTS order_details;
 DROP TABLE IF EXISTS orders;

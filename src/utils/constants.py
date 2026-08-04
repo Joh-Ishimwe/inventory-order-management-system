@@ -4,7 +4,6 @@
 # and procedures cannot be created before the tables they touch.
 SQL_BUILD_ORDER = [
     "sql/schema/00_drop_all.sql",
-    "sql/schema/01_create_database.sql",
     "sql/schema/02_business_rules.sql",
     "sql/schema/03_tables.sql",
     "sql/procedures/procedures.sql",
