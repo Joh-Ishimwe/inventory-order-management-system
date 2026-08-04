@@ -1,19 +1,9 @@
 USE inventory_order_management;
 
--- Sample data for demos and testing. Every name and email here is made up.
---
--- Two deliberate choices:
---
--- 1. Stock is never typed in directly. Products start at zero and every unit
---    arrives through record_stock_change, so the ledger and the balance
---    match by construction. v_stock_reconciliation proves it.
---
--- 2. Dates are relative to today, not hard-coded. The rolling tier window
---    keeps working however long from now this is run.
+-- Sample data for demos and testing (names and emails are made up); stock always flows
+-- through record_stock_change, and dates are relative to today so the tier window keeps working.
 
--- ---------------------------------------------------------------
 -- Customers. Grace is deactivated, to exercise the soft-delete path.
--- ---------------------------------------------------------------
 INSERT INTO customers (name, email, phone_number, is_active) VALUES
 ('Jane Mukamana',  'jane.mukamana@example.com',  '+250788111111', TRUE),
 ('Tom Habimana',   'tom.habimana@example.com',   '+250788222222', TRUE),
@@ -21,9 +11,7 @@ INSERT INTO customers (name, email, phone_number, is_active) VALUES
 ('Eric Niyonzima', 'eric.niyonzima@example.com', '+250788444444', TRUE),
 ('Grace Ingabire', 'grace.ingabire@example.com', '+250788555555', FALSE);
 
--- ---------------------------------------------------------------
 -- Products, all starting at zero stock.
--- ---------------------------------------------------------------
 INSERT INTO products (name, category, price, stock_quantity, reorder_level) VALUES
 ('Wireless Mouse',      'Electronics', 15.99, 0, 10),
 ('Mechanical Keyboard', 'Electronics', 45.50, 0,  8),
@@ -39,15 +27,9 @@ CALL record_stock_change(3,   3, 'INITIAL', NULL, 'Opening stock, arrived short'
 CALL record_stock_change(4,  20, 'INITIAL', NULL, 'Opening stock');
 CALL record_stock_change(6, 100, 'INITIAL', NULL, 'Opening stock');
 
--- ---------------------------------------------------------------
--- Historical orders, inserted directly so they can carry past dates and
--- a settled status. Live orders go through place_order instead.
--- The order_details trigger works out each subtotal, and
--- apply_order_discount sets the rate and the charged total.
--- ---------------------------------------------------------------
+-- Historical orders, inserted directly with past dates and a settled status; live orders go through place_order instead.
 
--- Order 1: Jane, delivered. Two products, small quantities, so no bulk
--- discount, but the order value crosses the first spend band.
+-- Order 1: Jane, delivered — two small-quantity lines, no bulk discount, but crosses the first spend band.
 INSERT INTO orders (customer_id, placed_at, status)
 VALUES (1, DATE_SUB(NOW(), INTERVAL 20 DAY), 'delivered');
 SET @o1 = LAST_INSERT_ID();
@@ -86,8 +68,7 @@ INSERT INTO order_details (order_id, product_id, quantity, unit_price) VALUES
 CALL apply_order_discount(@o4);
 CALL record_stock_change(2, -1, 'ORDER', @o4, NULL);
 
--- Order 5: Eric, still pending. Five of one product, so this line earns the
--- first bulk band and shows the quantity-based discount working.
+-- Order 5: Eric, pending — five units of one product, earning the first bulk band.
 INSERT INTO orders (customer_id, placed_at, status)
 VALUES (4, DATE_SUB(NOW(), INTERVAL 3 DAY), 'pending');
 SET @o5 = LAST_INSERT_ID();
@@ -96,8 +77,7 @@ INSERT INTO order_details (order_id, product_id, quantity, unit_price) VALUES
 CALL apply_order_discount(@o5);
 CALL record_stock_change(6, -5, 'ORDER', @o5, NULL);
 
--- Order 6: Jane again, large enough for the second spend band. This is what
--- pushes her into Gold.
+-- Order 6: Jane again, large enough for the second spend band, pushing her into Gold.
 INSERT INTO orders (customer_id, placed_at, status)
 VALUES (1, DATE_SUB(NOW(), INTERVAL 5 DAY), 'delivered');
 SET @o6 = LAST_INSERT_ID();
@@ -108,9 +88,7 @@ CALL apply_order_discount(@o6);
 CALL record_stock_change(2, -2, 'ORDER', @o6, NULL);
 CALL record_stock_change(1, -1, 'ORDER', @o6, NULL);
 
--- ---------------------------------------------------------------
 -- Now exercise the remaining paths through their real procedures.
--- ---------------------------------------------------------------
 
 -- Sarah returns one of her two mice.
 SELECT order_detail_id INTO @od_return
