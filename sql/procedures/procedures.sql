@@ -1,10 +1,6 @@
 USE inventory_order_management;
 
--- =============================================================================
--- get_rule
--- The only way anything reads a business threshold. Views, procedures and
--- reports all call this, so a threshold exists in exactly one place.
--- =============================================================================
+-- get_rule: the only way anything reads a business threshold, so each one exists in one place.
 DROP FUNCTION IF EXISTS get_rule;
 
 DELIMITER $$
@@ -27,15 +23,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- record_stock_change
--- The single owner of stock movement. Nothing else may touch
--- products.stock_quantity, which is what keeps the balance and the ledger
--- from drifting apart.
---
--- Deliberately has no COMMIT: it must be callable inside a bigger
--- transaction without ending it early.
--- =============================================================================
+-- record_stock_change: the single owner of stock movement, keeping the balance and the
+-- ledger from drifting apart. Deliberately has no COMMIT, so it composes inside a bigger transaction.
 DROP PROCEDURE IF EXISTS record_stock_change;
 
 DELIMITER $$
@@ -61,8 +50,7 @@ BEGIN
             SET MESSAGE_TEXT = 'Unknown product_id';
     END IF;
 
-    -- Lock the row before reading it, so two callers cannot both decide
-    -- there is enough stock for the same last unit.
+    -- Lock the row before reading, so two callers can't both see stock for the same last unit.
     SELECT stock_quantity INTO v_stock
     FROM products WHERE product_id = p_product_id FOR UPDATE;
 
@@ -80,15 +68,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- apply_order_discount
--- Sets the order-value discount, on top of whatever bulk discounts the
--- individual lines already earned. Called once when the order is placed, so
--- the rate is frozen at that moment.
---
--- The band is judged on the amount after bulk discounts, not the list price,
--- so the two rules do not compound into more than intended.
--- =============================================================================
+-- apply_order_discount: sets the order-value discount on top of bulk discounts, judged on the
+-- post-bulk amount (not list price) and frozen once at placement.
 DROP PROCEDURE IF EXISTS apply_order_discount;
 
 DELIMITER $$
@@ -115,17 +96,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- recalc_order_money
--- Rebuilds an order's money columns from its current line items.
---
--- It exists as a procedure so the three order_details triggers share one copy
--- of this arithmetic instead of holding three copies that could drift apart.
---
--- Reuses order_discount_rate as already stored rather than recalculating it,
--- so editing a line on an old order does not reprice it against today's
--- bands. Only apply_order_discount sets that rate, once, at placement.
--- =============================================================================
+-- recalc_order_money: rebuilds an order's money columns from its lines, shared by all three
+-- order_details triggers so editing a line never reprices the order against today's bands.
 DROP PROCEDURE IF EXISTS recalc_order_money;
 
 DELIMITER $$
@@ -135,8 +107,7 @@ BEGIN
     DECLARE v_after_bulk DECIMAL(10,2);
     DECLARE v_rate       DECIMAL(5,4);
 
-    -- Gross is list price. After-bulk applies each line's own rate and rounds
-    -- per line, which is how an invoice would show it.
+    -- Gross is list price; after-bulk applies each line's own rate, rounded per line as an invoice would show it.
     SELECT ROUND(COALESCE(SUM(quantity * unit_price), 0), 2),
            ROUND(COALESCE(SUM(ROUND(quantity * unit_price * (1 - discount_rate), 2)), 0), 2)
       INTO v_gross, v_after_bulk
@@ -153,16 +124,7 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- place_order
--- Places one order containing any number of products, in a single call.
---
--- p_items is a JSON array, for example:
---   [{"product_id":1,"quantity":2},{"product_id":3,"quantity":1}]
---
--- Either the whole order succeeds or none of it happens. There is no
--- half-built draft left behind if something fails partway.
--- =============================================================================
+-- place_order: places a multi-item order atomically; p_items is a JSON array of {product_id, quantity}.
 DROP PROCEDURE IF EXISTS place_order;
 
 DELIMITER $$
@@ -182,15 +144,13 @@ BEGIN
     DECLARE v_bad_qty     INT;
     DECLARE v_msg         VARCHAR(255);
 
-    -- Ordered by product_id on purpose. If every caller locks products in
-    -- the same order, two concurrent orders cannot deadlock each other.
+    -- Ordered by product_id, so two concurrent orders always lock in the same order and can't deadlock.
     DECLARE cur_items CURSOR FOR
         SELECT product_id, quantity FROM tmp_place_order_items ORDER BY product_id;
 
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_done = TRUE;
 
-    -- Any error at all: undo everything, then pass the error up unchanged
-    -- so the caller sees the real reason.
+    -- Any error rolls back and re-signals unchanged, so the caller sees the real reason.
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
@@ -212,8 +172,7 @@ BEGIN
 
     START TRANSACTION;
 
-    -- Flatten the JSON into rows. GROUP BY merges a product listed twice
-    -- into one line, which the unique constraint on order_details requires.
+    -- Flatten the JSON into rows; GROUP BY merges a product listed twice into one line.
     INSERT INTO tmp_place_order_items (product_id, quantity)
     SELECT jt.product_id, SUM(jt.quantity)
     FROM JSON_TABLE(p_items, '$[*]' COLUMNS (
@@ -237,8 +196,7 @@ BEGIN
             SET MESSAGE_TEXT = 'Customer does not exist or is not active';
     END IF;
 
-    -- Catch unknown products up front, so the loop below can assume
-    -- every lookup finds a row.
+    -- Catch unknown products up front, so the loop below can assume every lookup finds a row.
     SELECT COUNT(*) INTO v_missing
     FROM tmp_place_order_items t
     LEFT JOIN products p ON p.product_id = t.product_id
@@ -275,8 +233,7 @@ BEGIN
     END LOOP;
     CLOSE cur_items;
 
-    -- subtotal_amount was maintained by the order_details trigger as each
-    -- line went in, so the discount can be worked out from it now.
+    -- subtotal_amount was already maintained by the order_details trigger, so the discount can use it now.
     CALL apply_order_discount(p_order_id);
 
     COMMIT;
@@ -284,10 +241,7 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- cancel_order
--- Cancels an order that has not been delivered yet, and puts the stock back.
--- =============================================================================
+-- cancel_order: cancels an order that has not been delivered yet, and puts the stock back.
 DROP PROCEDURE IF EXISTS cancel_order;
 
 DELIMITER $$
@@ -302,8 +256,7 @@ BEGIN
     DECLARE v_product_id INT;
     DECLARE v_restore    INT;
 
-    -- Only what the customer still has counts. Anything already returned
-    -- was put back by the return, so returning it twice would inflate stock.
+    -- Only outstanding quantity counts; already-returned units were restored by the return itself.
     DECLARE cur_lines CURSOR FOR
         SELECT product_id, quantity - returned_quantity
         FROM order_details
@@ -348,11 +301,7 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- return_order_line
--- Returns some or all units of one line on a delivered order.
--- Partial returns are the normal case: five ordered, two sent back.
--- =============================================================================
+-- return_order_line: returns some or all units of one line on a delivered order.
 DROP PROCEDURE IF EXISTS return_order_line;
 
 DELIMITER $$
@@ -434,16 +383,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- replenish_stock
--- Adds stock from a supplier delivery.
---
--- The quantity check matters more than it looks. Procedures run with the
--- privileges of whoever created them, so an account that only has EXECUTE
--- on this one procedure is borrowing admin rights while inside it. Without
--- this check, that account could pass a negative number and quietly drain
--- stock while it was logged as a delivery.
--- =============================================================================
+-- replenish_stock: adds stock from a supplier delivery; the positive-quantity check matters because
+-- a caller with only EXECUTE here is borrowing admin rights and could otherwise drain stock silently.
 DROP PROCEDURE IF EXISTS replenish_stock;
 
 DELIMITER $$
@@ -470,11 +411,7 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- adjust_stock
--- Corrects stock after a stocktake, breakage or write-off. Can go either
--- way, so a reason note is required rather than optional.
--- =============================================================================
+-- adjust_stock: corrects stock after a stocktake, breakage or write-off; a reason note is required.
 DROP PROCEDURE IF EXISTS adjust_stock;
 
 DELIMITER $$
@@ -501,13 +438,8 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- replenish_all
--- Applies the whole restock plan in v_replenishment_plan, one product at a
--- time. A product that fails (e.g. a rule rejects it) is recorded as
--- FAILED and the run continues, rather than one bad row losing the rest of
--- the batch. Returns one row per product attempted.
--- =============================================================================
+-- replenish_all: applies the restock plan one product at a time, recording failures as FAILED
+-- instead of aborting the batch, and returns one row per product attempted.
 DROP PROCEDURE IF EXISTS replenish_all;
 
 DELIMITER $$
