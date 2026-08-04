@@ -152,6 +152,4 @@ so changing the bands later does not reprice old orders.
 
 ## A note on the sample data
 
-Every name, email and phone number is invented. Real customer data does not
-belong in a repository: it belongs in the database, behind the access
-controls in `sql/security/`.
+Every name, email and phone number is invented, No Real customer data.
