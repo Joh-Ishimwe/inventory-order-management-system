@@ -37,8 +37,35 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+class ConsoleFormatter(logging.Formatter):
+    """Renders each record as one short line for a human watching it live.
+
+    The file gets full JSON for later searching; nobody watching a build
+    happen needs a timestamp and a logger name on every line, they need to
+    see what passed and what failed.
+    """
+
+    # Plain ASCII, not unicode symbols: Windows consoles default to cp1252,
+    # which cannot encode most of them, and that crashes the handler mid-run.
+    _MARKERS = {"ERROR": "[FAIL]", "WARNING": "[WARN]", "INFO": "[ OK ]"}
+
+    def format(self, record: logging.LogRecord) -> str:
+        marker = self._MARKERS.get(record.levelname, "[....]")
+        line = f"{marker} {record.getMessage()}"
+
+        context = getattr(record, "context", None)
+        if isinstance(context, dict) and context:
+            details = ", ".join(f"{k}={v}" for k, v in context.items())
+            line = f"{line} ({details})"
+
+        if record.exc_info:
+            line = f"{line} -- {record.exc_info[0].__name__}: {record.exc_info[1]}"
+
+        return line
+
+
 def setup_logging(level: str = "INFO", log_file: str = "logs/pipeline.log") -> None:
-    """Send logs to both the console and a file, creating the folder if needed."""
+    """Send a short human line to the console and full JSON to a file."""
     global _CONFIGURED
     if _CONFIGURED:
         return
@@ -50,12 +77,18 @@ def setup_logging(level: str = "INFO", log_file: str = "logs/pipeline.log") -> N
     root.handlers.clear()
 
     console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(JsonFormatter())
+    console.setFormatter(ConsoleFormatter())
     root.addHandler(console)
 
     file_handler = logging.FileHandler(path, encoding="utf-8")
     file_handler.setFormatter(JsonFormatter())
     root.addHandler(file_handler)
+
+    # The driver logs its own connection/plugin chatter at INFO -- noise
+    # nobody has ever grepped the log file for. Raising just this logger's
+    # level drops it everywhere, without touching what the rest of the
+    # app logs at INFO.
+    logging.getLogger("mysql.connector").setLevel(logging.WARNING)
 
     _CONFIGURED = True
 
