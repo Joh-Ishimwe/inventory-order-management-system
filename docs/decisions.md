@@ -258,8 +258,7 @@ originally in Python. Neither needs to be: the math is one expression over
 `v_low_stock`, and the loop is a cursor. Moving both into SQL means
 `v_replenishment_plan` and `replenish_all` are, like everything else,
 reviewable and runnable on their own in Workbench, with no Python required to
-see them work. Python's role shrank to calling one of the two and printing
-what came back.
+see them work.
 
 The buffer multiplier itself moved into `business_rules` rather than staying
 a Python CLI default, for the same reason every other threshold is there:

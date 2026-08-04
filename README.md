@@ -74,20 +74,19 @@ in the order listed in `src/utils/constants.py`, then `sql/seed/`, then
 
 ## Everyday commands
 
-```bash
-# Low stock report
-python scripts/run_replenishment.py
+Run these directly in Workbench or any MySQL client — replenishing stock is
+a procedure call, not Python:
 
-# Actually restock what is low
-python scripts/run_replenishment.py --apply
+```sql
+-- Low stock report
+SELECT * FROM v_low_stock;
 
-# Place a batch of orders from a file
-python scripts/run_order_intake.py data/samples/order_requests.json
+-- The restock plan (quantity computed from business_rules)
+SELECT * FROM v_replenishment_plan;
+
+-- Apply the whole plan in one call
+CALL replenish_all('Scheduled restock');
 ```
-
-The sample order file contains deliberately broken requests. Watch them get
-reported and skipped while the valid ones still go through: one bad record
-should never take down a run.
 
 ---
 
