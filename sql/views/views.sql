@@ -1,11 +1,6 @@
 USE inventory_order_management;
 
--- =============================================================================
--- v_order_summary
--- One row per order: who placed it, when, what it came to, how many lines,
--- and how much of it came back.
--- Cancelled orders are left out, since no revenue was earned.
--- =============================================================================
+-- v_order_summary: one row per order — who, when, total, line count, and returns; cancelled orders are excluded.
 CREATE OR REPLACE VIEW v_order_summary AS
 SELECT
     o.order_id,
@@ -22,8 +17,7 @@ SELECT
     COUNT(od.order_detail_id)               AS number_of_lines,
     COALESCE(SUM(od.quantity), 0)           AS units_ordered,
     COALESCE(SUM(od.returned_quantity), 0)  AS units_returned,
-    -- A refund gives back what was actually paid for those units: the line
-    -- price after its bulk discount, then after the order-level discount.
+    -- A refund gives back what was actually paid: the line price after its bulk discount, then the order-level discount.
     ROUND(COALESCE(SUM(
         ROUND(od.returned_quantity * od.unit_price * (1 - od.discount_rate), 2)
     ), 0) * (1 - o.order_discount_rate), 2) AS refunded_amount,
@@ -38,11 +32,7 @@ GROUP BY o.order_id, c.customer_id, c.name, c.is_active,
          o.placed_at, o.status, o.subtotal_amount, o.bulk_discount_amount,
          o.order_discount_rate, o.order_discount_amount, o.total_amount;
 
--- =============================================================================
--- v_low_stock
--- Products at or below their reorder point, worst first.
--- Filters on the generated is_low_stock column so an index can be used.
--- =============================================================================
+-- v_low_stock: products at or below their reorder point, filtered on the generated is_low_stock column so an index can be used.
 CREATE OR REPLACE VIEW v_low_stock AS
 SELECT
     product_id,
@@ -55,17 +45,8 @@ SELECT
 FROM products
 WHERE is_low_stock = TRUE;
 
--- =============================================================================
--- v_customer_tiers
--- Spending tier per customer, worked out live rather than stored.
---
--- Nothing is cached, so a tier can never drift out of date. It also means
--- the thresholds exist in exactly one place: the business_rules table,
--- read through get_rule().
---
--- Net spend = what was charged, minus the value of anything returned,
--- ignoring cancelled orders, over the rolling window in business_rules.
--- =============================================================================
+-- v_customer_tiers: spending tier per customer, computed live from business_rules (via get_rule())
+-- so nothing drifts out of date; net spend = charged minus returns, over the rolling window, excluding cancellations.
 CREATE OR REPLACE VIEW v_customer_tiers AS
 SELECT
     c.customer_id,
@@ -85,12 +66,7 @@ LEFT JOIN v_order_summary s
               INTERVAL CAST(get_rule('tier_window_months') AS SIGNED) MONTH)
 GROUP BY c.customer_id, c.name, c.is_active;
 
--- =============================================================================
--- v_order_discounts
--- What each order was discounted, split by the two rules that can apply.
--- Reads the stored rates rather than recalculating, so historical orders keep
--- the discount they were actually charged even after the bands change.
--- =============================================================================
+-- v_order_discounts: each order's discount split by the two rules, reading stored rates so historical orders keep what they were actually charged.
 CREATE OR REPLACE VIEW v_order_discounts AS
 SELECT
     o.order_id,
@@ -104,8 +80,7 @@ SELECT
     o.order_discount_amount,
     ROUND(o.bulk_discount_amount + o.order_discount_amount, 2) AS total_discount,
     o.total_amount                               AS charged_amount,
-    -- The blended saving across the whole order, useful for reporting even
-    -- though no single rule was set to this number.
+    -- The blended saving across the whole order, useful for reporting even though no single rule set this number.
     CASE WHEN o.subtotal_amount > 0
          THEN ROUND(1 - (o.total_amount / o.subtotal_amount), 4)
          ELSE 0 END                              AS effective_discount_rate
@@ -113,14 +88,8 @@ FROM orders o
 JOIN customers c ON c.customer_id = o.customer_id
 WHERE o.status <> 'cancelled';
 
--- =============================================================================
--- v_stock_reconciliation
--- Health check. products.stock_quantity is a running balance;
--- inventory_logs is the ledger behind it. They must agree.
---
--- Any row where is_balanced = FALSE means something changed stock without
--- going through record_stock_change, which is a bug worth chasing.
--- =============================================================================
+-- v_stock_reconciliation: health check comparing products.stock_quantity against the inventory_logs ledger;
+-- any is_balanced = FALSE row means something bypassed record_stock_change.
 CREATE OR REPLACE VIEW v_stock_reconciliation AS
 SELECT
     p.product_id,
@@ -133,12 +102,8 @@ FROM products p
 LEFT JOIN inventory_logs l ON l.product_id = p.product_id
 GROUP BY p.product_id, p.name, p.stock_quantity;
 
--- =============================================================================
--- v_order_line_detail
--- Line-by-line view of an order, showing the bulk discount each line earned.
--- This is where the quantity-based rule is visible: two lines of the same
--- product at different quantities get different rates.
--- =============================================================================
+-- v_order_line_detail: line-by-line view of an order showing each line's bulk discount, where the
+-- quantity-based rule becomes visible (same product, different quantities, different rates).
 CREATE OR REPLACE VIEW v_order_line_detail AS
 SELECT
     od.order_detail_id,
@@ -159,13 +124,8 @@ FROM order_details od
 JOIN orders   o ON o.order_id   = od.order_id
 JOIN products p ON p.product_id = od.product_id;
 
--- =============================================================================
--- v_replenishment_plan
--- What each low-stock product should be restocked by, worst first.
--- Restocks to a multiple of the reorder level rather than exactly to it, so
--- the product does not immediately reappear on the low-stock report after
--- one sale. The multiplier is a business rule, not a hardcoded number.
--- =============================================================================
+-- v_replenishment_plan: how much each low-stock product should be restocked by, to a multiple of the
+-- reorder level (via the replenishment_buffer_multiplier rule) so it doesn't reappear after one sale.
 CREATE OR REPLACE VIEW v_replenishment_plan AS
 SELECT
     product_id,
