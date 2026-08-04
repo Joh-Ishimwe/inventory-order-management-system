@@ -1,8 +1,6 @@
 USE inventory_order_management;
 
--- =============================================================================
 -- order_details triggers
--- =============================================================================
 DROP TRIGGER IF EXISTS trg_order_details_before_insert;
 DROP TRIGGER IF EXISTS trg_order_details_after_insert;
 DROP TRIGGER IF EXISTS trg_order_details_after_update;
@@ -10,13 +8,8 @@ DROP TRIGGER IF EXISTS trg_order_details_after_delete;
 
 DELIMITER $$
 
--- Sets the bulk discount for a line from how many units it is for.
--- Doing it in a trigger means the rule holds however the line was created:
--- through place_order, through the seed script, or by hand.
---
--- Only on insert, never on update, so the rate a line was created with is
--- the rate it keeps. Editing an old order must not reprice it against
--- today's bands.
+-- Sets the bulk discount for a line from its quantity, on insert only, so an old line keeps
+-- the rate it was created with and editing an order never reprices it against today's bands.
 CREATE TRIGGER trg_order_details_before_insert
 BEFORE INSERT ON order_details
 FOR EACH ROW
@@ -33,11 +26,8 @@ BEGIN
     END IF;
 END$$
 
--- The next three keep the order header in step with its lines, so the two
--- can never disagree.
---
--- They reuse order_discount_rate as already stored rather than recalculating
--- it, for the same reason as above: the rate is frozen at placement.
+-- The next three keep the order header in step with its lines, reusing the stored
+-- order_discount_rate rather than recalculating it, since the rate is frozen at placement.
 
 CREATE TRIGGER trg_order_details_after_insert
 AFTER INSERT ON order_details
@@ -61,15 +51,12 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
 -- orders triggers
--- =============================================================================
 DROP TRIGGER IF EXISTS trg_orders_before_insert;
 DROP TRIGGER IF EXISTS trg_orders_status_transition;
 
 DELIMITER $$
--- CHECK constraints cannot call CURDATE(), so a future-dated order has to
--- be caught here instead.
+-- CHECK constraints cannot call CURDATE(), so a future-dated order has to be caught here instead.
 CREATE TRIGGER trg_orders_before_insert
 BEFORE INSERT ON orders
 FOR EACH ROW
@@ -80,14 +67,8 @@ BEGIN
     END IF;
 END$$
 
--- Stops an order sliding backwards through its lifecycle, for example a
--- delivered order being flipped back to pending.
---
--- Allowed moves:
---   pending   -> shipped, cancelled
---   shipped   -> delivered, cancelled
---   delivered -> returned
---   cancelled and returned are final
+-- Stops an order sliding backwards through its lifecycle (e.g. delivered -> pending).
+-- Allowed moves: pending -> shipped/cancelled, shipped -> delivered/cancelled, delivered -> returned.
 CREATE TRIGGER trg_orders_status_transition
 BEFORE UPDATE ON orders
 FOR EACH ROW
@@ -107,12 +88,7 @@ BEGIN
 END$$
 DELIMITER ;
 
--- =============================================================================
--- inventory_logs triggers
--- An audit trail that can be edited is not an audit trail. These make the
--- ledger genuinely append-only instead of only append-only by convention.
--- To correct a mistake, add a balancing ADJUSTMENT row.
--- =============================================================================
+-- inventory_logs triggers: make the ledger genuinely append-only; to correct a mistake, add a balancing ADJUSTMENT row.
 DROP TRIGGER IF EXISTS trg_inventory_logs_no_update;
 DROP TRIGGER IF EXISTS trg_inventory_logs_no_delete;
 
