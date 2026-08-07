@@ -1,25 +1,3 @@
-# Secrets. Never commit real credentials.
-.env
-
-# Virtual environment
-venv/
-.venv/
-
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-
-# Runtime output
-logs/*
-!logs/.gitkeep
-
-# Working data. Only the small sample files are tracked.
-data/raw/*
-data/staging/*
-data/processed/*
-!data/samples/
-
 # Editors and operating systems
 .vscode/
 .idea/
