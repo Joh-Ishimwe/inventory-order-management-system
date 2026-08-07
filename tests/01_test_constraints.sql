@@ -19,6 +19,14 @@ CALL expect_error(
   'duplicate customer email');
 
 CALL expect_error(
+  'INSERT INTO customers (name, email) VALUES (''No At Sign'', ''bad.example.com'')',
+  'email with no @');
+
+CALL expect_error(
+  'INSERT INTO customers (name, email) VALUES (''No Dot'', ''bad@examplecom'')',
+  'email with no . after the @');
+
+CALL expect_error(
   'INSERT INTO order_details (order_id, product_id, quantity, unit_price)
      VALUES (1, 1, 1, 15.99)',
   'same product twice in one order');

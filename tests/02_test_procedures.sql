@@ -6,10 +6,10 @@ USE inventory_order_management;
 -- This suite calls the real procedures, including place_order, rather than
 -- mocking them, so it creates real orders and ledger rows that outlive the
 -- run. That is not cleaned up afterward on purpose: inventory_logs is
--- append-only (docs/decisions.md #6), so those rows cannot be deleted, and
--- there is no way to wrap this in one outer transaction and roll it back
--- either -- each procedure under test opens and commits its own
--- transaction, and starting one mid-transaction implicitly commits
+-- append-only (triggers block UPDATE/DELETE on it), so those rows cannot be
+-- deleted, and there is no way to wrap this in one outer transaction and
+-- roll it back either -- each procedure under test opens and commits its
+-- own transaction, and starting one mid-transaction implicitly commits
 -- whatever came before it. Rebuild the database after running this suite
 -- rather than treating the run as a no-op.
 
@@ -161,6 +161,10 @@ CALL expect_error('CALL place_order(1, ''[]'', @x)', 'order with no items');
 CALL expect_error(
   'CALL place_order(1, ''[{"product_id":1,"quantity":0}]'', @x)',
   'order line with a quantity of zero');
+
+CALL expect_error(
+  'CALL place_order(1, ''[{"product_id":1,"quantity":-2}]'', @x)',
+  'order line with a negative quantity');
 
 CALL expect_error(
   'CALL place_order(1, ''[{"product_id":1,"quantity":1},{"product_id":9999,"quantity":1}]'', @x)',
