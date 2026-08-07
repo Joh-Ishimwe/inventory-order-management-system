@@ -63,8 +63,8 @@ BEGIN
        SET stock_quantity = stock_quantity + p_change_amount
      WHERE product_id = p_product_id;
 
-    INSERT INTO inventory_logs (product_id, order_id, change_amount, reason, note)
-    VALUES (p_product_id, p_order_id, p_change_amount, p_reason, p_note);
+    INSERT INTO inventory_logs (product_id, order_id, change_amount, balance_after, reason, note)
+    VALUES (p_product_id, p_order_id, p_change_amount, v_stock + p_change_amount, p_reason, p_note);
 END$$
 DELIMITER ;
 

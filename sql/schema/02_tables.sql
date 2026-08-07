@@ -96,10 +96,12 @@ CREATE TABLE inventory_logs (
     product_id    INT         NOT NULL,
     order_id      INT,
     change_amount INT         NOT NULL,
+    balance_after INT         NOT NULL,
     reason        VARCHAR(20) NOT NULL,
     note          VARCHAR(255),
     changed_at    TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT chk_logs_change_nonzero CHECK (change_amount <> 0),
+    CONSTRAINT chk_logs_balance_non_negative CHECK (balance_after >= 0),
     CONSTRAINT chk_logs_reason CHECK (
         reason IN ('INITIAL','ORDER','REPLENISHMENT','RETURN','CANCELLATION','ADJUSTMENT')
     ),
