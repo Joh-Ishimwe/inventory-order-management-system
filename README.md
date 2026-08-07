@@ -1,11 +1,9 @@
 # Inventory and Order Management System
 
-A MySQL 8 database for an e-commerce company, with a Python layer that builds
-it, loads it, and runs day-to-day jobs against it.
-
-It handles products and stock, customers, orders with any number of products,
-returns and cancellations, a full audit trail of every stock movement, and
-reporting on spend, discounts and low stock.
+A MySQL 8 database for an e-commerce company: products and stock, customers,
+orders with any number of products, returns and cancellations, a full audit
+trail of every stock movement, and reporting on spend, discounts and low
+stock.
 
 ---
 
@@ -18,64 +16,57 @@ reporting on spend, discounts and low stock.
 | `sql/triggers/` | Order totals, status rules, append-only ledger guard |
 | `sql/views/` | Reporting views, including the tier and reconciliation views |
 | `sql/indexes/` | Indexes, with the reasoning for each one |
-| `sql/security/` | Roles, grants and example accounts |
 | `sql/seed/` | Sample data, built through the real procedures |
-| `src/` | Python: config, logging, database access, pipelines |
-| `scripts/` | Command-line entry points |
-| `tests/` | Test suites that fail loudly rather than printing results to read |
-| `docs/` | Architecture, data dictionary, security, decision record |
+| `sql/run_all.sql` | Master script that builds everything in order |
+| `tests/` | SQL test suites for constraints, procedures and reconciliation |
 
 ---
 
 ## Getting started
 
 Needs MySQL 8.0.16 or newer (`CHECK` constraints are only enforced from that
-version) and Python 3.10+.
+version).
+
+One file builds everything — schema, procedures, triggers, views, indexes,
+seed data:
 
 ```bash
-git clone <your-repo-url>
-cd inventory-order-management-system
-
-python -m venv venv
-# Windows
-.\venv\Scripts\Activate.ps1
-# macOS or Linux
-source venv/bin/activate
-
-pip install -r requirements.txt
-
-cp .env.example .env        # then put your MySQL password in it
+mysql -u root -p < sql/run_all.sql
 ```
 
-Build everything:
+or, inside Workbench or an open client session:
 
-```bash
-python scripts/run_pipeline.py --with-tests
+```sql
+SOURCE sql/run_all.sql;
 ```
 
-That drops anything existing, creates the schema, procedures, triggers, views
-and indexes, loads the sample data, runs all four test suites, and finishes
-with a reconciliation check. Any missing folders (`logs/`, `data/…`) are
-created automatically, so a fresh clone works with no manual setup.
+It creates the database, so a fresh instance needs no manual setup beyond
+having MySQL running. See `sql/run_all.sql` for the file order if you'd
+rather run each step by hand.
 
-Add roles and example accounts:
+Tests are separate, since they call the real procedures and leave rows
+behind: run `tests/00_test_helpers.sql`, then `01`, `02`, `03` in order.
 
-```bash
-python scripts/run_pipeline.py --with-security
-```
+---
 
-### Running it without Python
+## Entity relationships
 
-Every `.sql` file works on its own in MySQL Workbench or the client. Run them
-in the order listed in `src/utils/constants.py`, then `sql/seed/`, then
-`tests/`.
+Full column-level detail lives in [doc/architecture.md](doc/architecture.md)
+and is kept in step with the schema there; this is the same diagram, so the
+two never drift apart.
+
+![Entity relationship diagram](doc/inventory_order_management_erd.png)
+
+## Architecture
+
+Business rules feed the procedures and triggers that are the only path to
+the tables; nothing else writes to them. Views sit on top for reporting, and
+everything is reached through a normal MySQL client — there is no separate
+application layer.
 
 ---
 
 ## Everyday commands
-
-Run these directly in Workbench or any MySQL client — replenishing stock is
-a procedure call, not Python:
 
 ```sql
 -- Low stock report
@@ -104,8 +95,7 @@ so there is never a half-built order to clean up.
 
 **Stock has one owner.** Only `record_stock_change` touches
 `products.stock_quantity`, and it always writes a matching ledger row.
-`v_stock_reconciliation` proves the balance and the ledger still agree, and
-the build fails if they do not.
+`v_stock_reconciliation` proves the balance and the ledger still agree.
 
 **The ledger cannot be edited.** Triggers block `UPDATE` and `DELETE` on
 `inventory_logs`. To fix a mistake you post a correcting `ADJUSTMENT`, which
@@ -114,7 +104,7 @@ is what an audit trail is for.
 **Business numbers live in a table, not in code.** Tier thresholds, the
 spending window and discount bands sit in `business_rules` and are read
 through one function. Changing the Gold threshold is a single `UPDATE`, and
-every report follows immediately. There is a test proving exactly that.
+every report follows immediately.
 
 **Tiers are worked out on demand.** Nothing is stored, so a tier can never go
 stale, and the rules exist in one place instead of several.
@@ -141,15 +131,6 @@ so changing the bands later does not reprice old orders.
 
 ---
 
-## Documentation
-
-- `docs/architecture.md` — the model and why it is shaped this way
-- `docs/data_dictionary.md` — every table, column and procedure
-- `docs/security.md` — roles, grants and the privilege model
-- `docs/decisions.md` — the design decisions, the options rejected, and why
-
----
-
 ## A note on the sample data
 
-Every name, email and phone number is invented, No Real customer data.
+Every name, email and phone number is invented. No real customer data.
