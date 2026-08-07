@@ -5,6 +5,7 @@
 SOURCE sql/schema/00_drop_all.sql;
 SOURCE sql/schema/02_tables.sql;
 SOURCE sql/schema/03_business_rules.sql;
+SOURCE sql/schema/04_system_log.sql;
 SOURCE sql/procedures/procedures.sql;
 SOURCE sql/triggers/triggers.sql;
 SOURCE sql/views/views.sql;

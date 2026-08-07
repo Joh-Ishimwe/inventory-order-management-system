@@ -23,6 +23,28 @@ BEGIN
 END$$
 DELIMITER ;
 
+-- log_event: the only way anything writes to system_logs. Deliberately does its own
+-- COMMIT (unlike record_stock_change), so a log row survives even when the caller's
+-- transaction rolls back. That only works because of where it gets called from: after
+-- the caller's own ROLLBACK (failure) or after the caller's own COMMIT (success) --
+-- never while a caller's transaction is still open, or this would commit it early.
+DROP PROCEDURE IF EXISTS log_event;
+
+DELIMITER $$
+CREATE PROCEDURE log_event(
+    IN p_log_level  VARCHAR(10),
+    IN p_source     VARCHAR(64),
+    IN p_message    VARCHAR(500),
+    IN p_error_code VARCHAR(20),
+    IN p_context    JSON
+)
+BEGIN
+    INSERT INTO system_logs (log_level, source, message, error_code, context)
+    VALUES (p_log_level, p_source, p_message, p_error_code, p_context);
+    COMMIT;
+END$$
+DELIMITER ;
+
 -- record_stock_change: the single owner of stock movement, keeping the balance and the
 -- ledger from drifting apart. Deliberately has no COMMIT, so it composes inside a bigger transaction.
 DROP PROCEDURE IF EXISTS record_stock_change;
@@ -143,6 +165,8 @@ BEGIN
     DECLARE v_missing     INT;
     DECLARE v_bad_qty     INT;
     DECLARE v_msg         VARCHAR(255);
+    DECLARE v_err_msg     VARCHAR(255);
+    DECLARE v_err_state   VARCHAR(10);
 
     -- Ordered by product_id, so two concurrent orders always lock in the same order and can't deadlock.
     DECLARE cur_items CURSOR FOR
@@ -151,10 +175,14 @@ BEGIN
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_done = TRUE;
 
     -- Any error rolls back and re-signals unchanged, so the caller sees the real reason.
+    -- The log_event call happens after ROLLBACK, so the log row survives it.
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
+        GET DIAGNOSTICS CONDITION 1 v_err_msg = MESSAGE_TEXT, v_err_state = RETURNED_SQLSTATE;
         ROLLBACK;
         DROP TEMPORARY TABLE IF EXISTS tmp_place_order_items;
+        CALL log_event('ERROR', 'place_order', v_err_msg, v_err_state,
+                        JSON_OBJECT('customer_id', p_customer_id));
         RESIGNAL;
     END;
 
@@ -237,6 +265,8 @@ BEGIN
     CALL apply_order_discount(p_order_id);
 
     COMMIT;
+    CALL log_event('INFO', 'place_order', 'Order placed', NULL,
+                    JSON_OBJECT('order_id', p_order_id, 'customer_id', p_customer_id));
     DROP TEMPORARY TABLE IF EXISTS tmp_place_order_items;
 END$$
 DELIMITER ;
@@ -255,6 +285,8 @@ BEGIN
     DECLARE v_exists     INT;
     DECLARE v_product_id INT;
     DECLARE v_restore    INT;
+    DECLARE v_err_msg     VARCHAR(255);
+    DECLARE v_err_state   VARCHAR(10);
 
     -- Only outstanding quantity counts; already-returned units were restored by the return itself.
     DECLARE cur_lines CURSOR FOR
@@ -267,7 +299,10 @@ BEGIN
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
+        GET DIAGNOSTICS CONDITION 1 v_err_msg = MESSAGE_TEXT, v_err_state = RETURNED_SQLSTATE;
         ROLLBACK;
+        CALL log_event('ERROR', 'cancel_order', v_err_msg, v_err_state,
+                        JSON_OBJECT('order_id', p_order_id));
         RESIGNAL;
     END;
 
@@ -298,6 +333,8 @@ BEGIN
     UPDATE orders SET status = 'cancelled' WHERE order_id = p_order_id;
 
     COMMIT;
+    CALL log_event('INFO', 'cancel_order', 'Order cancelled', NULL,
+                    JSON_OBJECT('order_id', p_order_id));
 END$$
 DELIMITER ;
 
@@ -320,10 +357,15 @@ BEGIN
     DECLARE v_open_lines  INT;
     DECLARE v_date        DATE;
     DECLARE v_placed      DATE;
+    DECLARE v_err_msg     VARCHAR(255);
+    DECLARE v_err_state   VARCHAR(10);
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
+        GET DIAGNOSTICS CONDITION 1 v_err_msg = MESSAGE_TEXT, v_err_state = RETURNED_SQLSTATE;
         ROLLBACK;
+        CALL log_event('ERROR', 'return_order_line', v_err_msg, v_err_state,
+                        JSON_OBJECT('order_detail_id', p_order_detail_id));
         RESIGNAL;
     END;
 
@@ -380,6 +422,9 @@ BEGIN
     END IF;
 
     COMMIT;
+    CALL log_event('INFO', 'return_order_line', 'Return recorded', NULL,
+                    JSON_OBJECT('order_detail_id', p_order_detail_id, 'order_id', v_order_id,
+                                'quantity', p_quantity));
 END$$
 DELIMITER ;
 
@@ -394,9 +439,15 @@ CREATE PROCEDURE replenish_stock(
     IN p_note       VARCHAR(255)
 )
 BEGIN
+    DECLARE v_err_msg   VARCHAR(255);
+    DECLARE v_err_state VARCHAR(10);
+
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
+        GET DIAGNOSTICS CONDITION 1 v_err_msg = MESSAGE_TEXT, v_err_state = RETURNED_SQLSTATE;
         ROLLBACK;
+        CALL log_event('ERROR', 'replenish_stock', v_err_msg, v_err_state,
+                        JSON_OBJECT('product_id', p_product_id, 'quantity', p_quantity));
         RESIGNAL;
     END;
 
@@ -408,6 +459,8 @@ BEGIN
     START TRANSACTION;
     CALL record_stock_change(p_product_id, p_quantity, 'REPLENISHMENT', NULL, p_note);
     COMMIT;
+    CALL log_event('INFO', 'replenish_stock', 'Stock replenished', NULL,
+                    JSON_OBJECT('product_id', p_product_id, 'quantity', p_quantity));
 END$$
 DELIMITER ;
 
@@ -421,9 +474,15 @@ CREATE PROCEDURE adjust_stock(
     IN p_note          VARCHAR(255)
 )
 BEGIN
+    DECLARE v_err_msg   VARCHAR(255);
+    DECLARE v_err_state VARCHAR(10);
+
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
+        GET DIAGNOSTICS CONDITION 1 v_err_msg = MESSAGE_TEXT, v_err_state = RETURNED_SQLSTATE;
         ROLLBACK;
+        CALL log_event('ERROR', 'adjust_stock', v_err_msg, v_err_state,
+                        JSON_OBJECT('product_id', p_product_id, 'change_amount', p_change_amount));
         RESIGNAL;
     END;
 
@@ -435,6 +494,8 @@ BEGIN
     START TRANSACTION;
     CALL record_stock_change(p_product_id, p_change_amount, 'ADJUSTMENT', NULL, p_note);
     COMMIT;
+    CALL log_event('INFO', 'adjust_stock', 'Stock adjusted', NULL,
+                    JSON_OBJECT('product_id', p_product_id, 'change_amount', p_change_amount));
 END$$
 DELIMITER ;
 
@@ -451,6 +512,8 @@ BEGIN
     DECLARE v_stock       INT;
     DECLARE v_restock_by  INT;
     DECLARE v_error       VARCHAR(255);
+    DECLARE v_ok_count     INT;
+    DECLARE v_failed_count INT;
 
     DECLARE plan_cursor CURSOR FOR
         SELECT product_id, name, stock_quantity, restock_by FROM v_replenishment_plan;
@@ -489,6 +552,14 @@ BEGIN
     CLOSE plan_cursor;
 
     SELECT * FROM tmp_replenish_results;
+
+    -- One summary row per batch run, on top of the per-product rows replenish_stock already logged.
+    SELECT COUNT(*) INTO v_ok_count     FROM tmp_replenish_results WHERE status = 'OK';
+    SELECT COUNT(*) INTO v_failed_count FROM tmp_replenish_results WHERE status = 'FAILED';
+    CALL log_event('INFO', 'replenish_all', 'Batch replenishment run', NULL,
+                    JSON_OBJECT('attempted', v_ok_count + v_failed_count,
+                                'ok', v_ok_count, 'failed', v_failed_count));
+
     DROP TEMPORARY TABLE tmp_replenish_results;
 END$$
 DELIMITER ;

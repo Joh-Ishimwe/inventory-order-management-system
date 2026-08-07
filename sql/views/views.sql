@@ -124,6 +124,26 @@ FROM order_details od
 JOIN orders   o ON o.order_id   = od.order_id
 JOIN products p ON p.product_id = od.product_id;
 
+-- v_recent_system_errors: ERROR-level entries from the last 7 days, newest first --
+-- the first place to look when something reports a failure.
+CREATE OR REPLACE VIEW v_recent_system_errors AS
+SELECT log_id, source, message, error_code, context, logged_at
+FROM system_logs
+WHERE log_level = 'ERROR'
+  AND logged_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+ORDER BY logged_at DESC;
+
+-- v_system_log_summary: event counts by day/source/level, to spot a source suddenly
+-- erroring more than usual rather than reading rows one at a time.
+CREATE OR REPLACE VIEW v_system_log_summary AS
+SELECT
+    DATE(logged_at) AS log_date,
+    source,
+    log_level,
+    COUNT(*) AS event_count
+FROM system_logs
+GROUP BY DATE(logged_at), source, log_level;
+
 -- v_replenishment_plan: how much each low-stock product should be restocked by, to a multiple of the
 -- reorder level (via the replenishment_buffer_multiplier rule) so it doesn't reappear after one sale.
 CREATE OR REPLACE VIEW v_replenishment_plan AS

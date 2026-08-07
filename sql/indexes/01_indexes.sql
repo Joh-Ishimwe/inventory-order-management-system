@@ -20,3 +20,7 @@ CREATE INDEX idx_products_category ON products(category);
 
 -- Audit history for one product over a date range.
 CREATE INDEX idx_logs_product_changed ON inventory_logs(product_id, changed_at);
+
+-- v_recent_system_errors filters on level and a date range; v_system_log_summary groups by source.
+CREATE INDEX idx_system_logs_level_logged ON system_logs(log_level, logged_at);
+CREATE INDEX idx_system_logs_source ON system_logs(source);

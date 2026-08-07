@@ -109,3 +109,26 @@ BEGIN
         SET MESSAGE_TEXT = 'inventory_logs is append-only: rows cannot be deleted';
 END$$
 DELIMITER ;
+
+-- system_logs triggers: same reasoning as inventory_logs -- a record of what failed
+-- shouldn't be editable after the fact, or it stops being evidence.
+DROP TRIGGER IF EXISTS trg_system_logs_no_update;
+DROP TRIGGER IF EXISTS trg_system_logs_no_delete;
+
+DELIMITER $$
+CREATE TRIGGER trg_system_logs_no_update
+BEFORE UPDATE ON system_logs
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'system_logs is append-only: rows cannot be updated';
+END$$
+
+CREATE TRIGGER trg_system_logs_no_delete
+BEFORE DELETE ON system_logs
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'system_logs is append-only: rows cannot be deleted';
+END$$
+DELIMITER ;
